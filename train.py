@@ -15,10 +15,10 @@ from models import Generator, Discriminator
 
 train_args = {
     'train_batch_size': 256,
-    'val_batch_size': 1024,
+    'val_batch_size': 256,
     'hr_size': 96,  # make sure that hr_size can be divided by scale_factor exactly
     'scale_factor': 4,  # should be power of 2
-    'g_snapshot': '',
+    'g_snapshot': 'pretrain_g_epoch_10_loss_0.0000_psnr_0.0000.pth',
     'd_snapshot': '',
     'g_lr': 1e-4,
     'd_lr': 1e-4,
@@ -29,7 +29,7 @@ train_args = {
 }
 
 g_pretrain_args = {
-    'pretrain': True,
+    'pretrain': False,
     'epoch_num': 140,
     'lr': 1e-4,
 }
@@ -64,7 +64,8 @@ val_loader = DataLoader(val_set, batch_size=train_args['val_batch_size'], num_wo
 
 g = Generator(scale_factor=train_args['scale_factor']).cuda().train()
 if len(train_args['g_snapshot']) > 0:
-    g.load_state_dict(train_args['g_snapshot'])
+    print 'load generator snapshot ' + train_args['g_snapshot']
+    g.load_state_dict(torch.load(os.path.join(train_args['ckpt_path'], train_args['g_snapshot'])))
 
 mse_criterion = nn.MSELoss().cuda()
 train_iter_num = len(train_loader)
@@ -97,15 +98,17 @@ if g_pretrain_args['pretrain']:
             writer.add_scalar('pretrain_g_mse_loss', g_mse_loss_record.avg, epoch * train_iter_num + i + 1)
             writer.add_scalar('pretrain_psnr', psnr_record.avg, epoch * train_iter_num + i + 1)
 
-        torch.save(g.state_dict(), 'pretrain_g_epoch_%d_loss_%.4f_psnr_%.4f.pth' % (
-            epoch + 1, g_mse_loss_record.avg, psnr_record.avg))
+        torch.save(g.state_dict(), os.path.join(
+            train_args['ckpt_path'], 'pretrain_g_epoch_%d_loss_%.4f_psnr_%.4f.pth' % (
+                epoch + 1, g_mse_loss_record.avg, psnr_record.avg)))
 
         g_mse_loss_record.reset()
         psnr_record.reset()
 
 d = Discriminator().cuda().train()
 if len(train_args['d_snapshot']) > 0:
-    d.load_state_dict(train_args['d_snapshot'])
+    print 'load discriminator snapshot ' + train_args['d_snapshot']
+    d.load_state_dict(torch.load(os.path.join(train_args['ckpt_path'], train_args['d_snapshot'])))
 perceptual_criterion = PerceptualLoss().cuda()
 ad_criterion = nn.BCELoss().cuda()
 g_optimizer = optim.Adam(g.parameters(), lr=train_args['g_lr'])
@@ -180,7 +183,7 @@ for epoch in range(train_args['start_epoch'] - 1, train_args['epoch_num']):
         g_perceptual_loss_record.update(g_perceptual_loss.data[0], batch_size)
         psnr_record.update(10 * math.log10(1 / g_mse_loss.data[0]), batch_size)
 
-        for lr, hr, hr_gen in zip(lr_imgs.cpu(), hr_imgs.cpu().data, gen_hr_imgs.cpu().data):
+        for lr, hr, hr_gen in zip(lr_imgs.cpu().data, hr_imgs.cpu().data, gen_hr_imgs.cpu().data):
             val_visual.extend([lr_bicubic_upscale(denormalize(lr)), denormalize(hr), denormalize(hr_gen)])
 
         print 'validating %d / %d' % (i + 1, val_iter_num)
