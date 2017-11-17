@@ -1,5 +1,6 @@
 import math
 
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -38,7 +39,7 @@ class Generator(nn.Module):
         block7 = self.block7(block6)
         block8 = self.block8(block1 + block7)
 
-        return block8
+        return (F.tanh(block8) + 1) / 2
 
 
 class Discriminator(nn.Module):
@@ -119,11 +120,3 @@ class UpsampleBLock(nn.Module):
         x = self.pixel_shuffle(x)
         x = self.prelu(x)
         return x
-
-# from torch.autograd import Variable
-# import torch
-#
-# a = Variable(torch.rand(4, 3, 112, 112)).cuda()
-# g = Generator().cuda()
-# d = Discriminator().cuda()
-# print d(a).size()
