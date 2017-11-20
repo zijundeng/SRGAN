@@ -15,10 +15,10 @@ from misc import PerceptualLoss, AvgMeter, LRTransformTest, TotalVariationLoss
 from models import Generator, Discriminator
 
 train_args = {
-    'train_batch_size': 512,
+    'train_batch_size': 224,
     'hr_size': 96,  # make sure that hr_size can be divided by scale_factor exactly
     'scale_factor': 4,  # should be power of 2
-    'g_snapshot': '',
+    'g_snapshot': 'pretrain_g_epoch_100_loss_0.00385_psnr_24.15336.pth',
     'd_snapshot': '',
     'g_lr': 1e-4,
     'd_lr': 1e-4,
@@ -27,12 +27,13 @@ train_args = {
     'set5_path': '/home/b3-542/文档/datasets/SelfExSR-master/data/Set5/image',
     'set14_path': '/home/b3-542/文档/datasets/SelfExSR-master/data/Set14/image',
     'start_epoch': 1,
-    'epoch_num': 10,
-    'ckpt_path': './ckpt'
+    'epoch_num': 30,
+    'ckpt_path': './ckpt',
+    'c': 0.01
 }
 
 g_pretrain_args = {
-    'pretrain': True,
+    'pretrain': False,
     'epoch_num': 100,
     'lr': 1e-4,
 }
@@ -121,11 +122,10 @@ def train():
         print 'load discriminator snapshot ' + train_args['d_snapshot']
         d.load_state_dict(torch.load(os.path.join(train_args['ckpt_path'], train_args['d_snapshot'])))
 
-    g_optimizer = optim.Adam(g.parameters(), lr=train_args['g_lr'])
-    d_optimizer = optim.Adam(d.parameters(), lr=train_args['d_lr'])
+    g_optimizer = optim.RMSprop(g.parameters(), lr=train_args['g_lr'])
+    d_optimizer = optim.RMSprop(d.parameters(), lr=train_args['d_lr'])
 
     perceptual_criterion, tv_criterion = PerceptualLoss().cuda(), TotalVariationLoss().cuda()
-    ad_criterion = nn.BCELoss().cuda()
 
     g_mse_loss_record, g_perceptual_loss_record, g_tv_loss_record = AvgMeter(), AvgMeter(), AvgMeter()
     psnr_record, g_ad_loss_record, g_loss_record, d_loss_record = AvgMeter(), AvgMeter(), AvgMeter(), AvgMeter()
@@ -137,23 +137,24 @@ def train():
             lr_imgs = Variable(torch.stack([train_lr_transform(img) for img in hr_imgs], 0)).cuda()
             hr_imgs = Variable(hr_imgs).cuda()
             gen_hr_imgs = g(lr_imgs)
-            target_real = Variable(torch.ones(batch_size)).cuda()
-            target_fake = Variable(torch.zeros(batch_size)).cuda()
 
             # update d
             d.zero_grad()
-            d_ad_loss = ad_criterion(d(hr_imgs), target_real) + ad_criterion(d(gen_hr_imgs.detach()), target_fake)
+            d_ad_loss = d(gen_hr_imgs.detach()).mean() - d(hr_imgs).mean()
             d_ad_loss.backward()
             d_optimizer.step()
 
             d_loss_record.update(d_ad_loss.data[0], batch_size)
+
+            for p in d.parameters():
+                p.data.clamp_(-train_args['c'], train_args['c'])
 
             # update g
             g.zero_grad()
             g_mse_loss = mse_criterion(gen_hr_imgs, hr_imgs)
             g_perceptual_loss = perceptual_criterion(gen_hr_imgs, hr_imgs)
             g_tv_loss = tv_criterion(gen_hr_imgs)
-            g_ad_loss = ad_criterion(d(gen_hr_imgs), target_real)
+            g_ad_loss = -d(gen_hr_imgs).mean()
             g_loss = g_mse_loss + 0.006 * g_perceptual_loss + 2e-8 * g_tv_loss + 0.001 * g_ad_loss
             g_loss.backward()
             g_optimizer.step()
@@ -222,12 +223,11 @@ def validate(g, curr_epoch, d=None):
         val_visual = torch.stack(val_visual, 0)
         val_visual = vutils.make_grid(val_visual, nrow=3, padding=5)
 
-        snapshot_name = 'epoch_%d_psnr_%.5f_g_mse_loss_%.5f' % (
-            curr_epoch + 1, psnr_record.avg, g_mse_loss_record.avg)
-
-        writer.add_image(snapshot_name, val_visual)
+        snapshot_name = 'epoch_%d_%s_g_mse_loss_%.5f_psnr_%.5f' % (
+            curr_epoch + 1, name, g_mse_loss_record.avg, psnr_record.avg)
 
         if d is None:
+            snapshot_name = 'pretrain_' + snapshot_name
             writer.add_scalar('pretrain_validate_%s_psnr' % name, psnr_record.avg, curr_epoch + 1)
             writer.add_scalar('pretrain_validate_%s_g_mse_loss' % name, g_mse_loss_record.avg, curr_epoch + 1)
 
@@ -243,6 +243,8 @@ def validate(g, curr_epoch, d=None):
             torch.save(d.state_dict(), os.path.join(train_args['ckpt_path'], snapshot_name + '_d.pth'))
 
         torch.save(g.state_dict(), os.path.join(train_args['ckpt_path'], snapshot_name + '_g.pth'))
+
+        writer.add_image(snapshot_name, val_visual)
 
         g_mse_loss_record.reset()
         psnr_record.reset()

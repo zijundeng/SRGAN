@@ -80,8 +80,7 @@ class Discriminator(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(512, 1024, kernel_size=1),
             nn.LeakyReLU(),
-            nn.Conv2d(1024, 1, kernel_size=1),
-            nn.Sigmoid()
+            nn.Conv2d(1024, 1, kernel_size=1)
         )
 
     def forward(self, x):
